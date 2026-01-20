@@ -1,4 +1,4 @@
-# wow_terminal/ui.py
+# wow_terminal/ui.py (updated)
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,7 +6,8 @@ from datetime import datetime
 from .api import BlizzardAPI
 from .database import Database
 from .analyzer import AuctionAnalyzer
-from .calculator import Recipe, CraftingCalculator, format_gold, print_crafting_flow  # Note: print_crafting_flow is console; we'll adapt
+from .calculator import Recipe, CraftingCalculator, format_gold
+from .quant import rsi  # New import
 
 # Bloomberg-like theme: Dark background, green/red accents
 st.markdown("""
@@ -158,6 +159,46 @@ def main_ui():
             st.error("Recipe not found.")
     else:
         st.info("Fetch auctions first.")
+
+with col2:
+        st.subheader("Price History Chart")
+        hist = Database.get_price_history(selected_item_id, realm_id)
+        if not hist.empty:
+            hist['avg_gold'] = hist['avg_price'] / 10000
+            fig, ax1 = plt.subplots()
+            ax1.plot(hist['datetime'], hist['avg_gold'], color='lime', label='Avg Price')
+            ax1.set_ylabel('Gold', color='lime')
+            ax1.tick_params(axis='y', labelcolor='lime')
+
+            # Add RSI subplot
+            current_rsi, rsi_df = rsi(selected_item_id, realm_id)
+            if rsi_df is not None:
+                ax2 = ax1.twinx()
+                ax2.plot(rsi_df['datetime'], rsi_df['rsi'], color='cyan', label='RSI (14)')
+                ax2.set_ylabel('RSI', color='cyan')
+                ax2.tick_params(axis='y', labelcolor='cyan')
+                ax2.axhline(70, color='red', linestyle='--', linewidth=0.5)
+                ax2.axhline(30, color='green', linestyle='--', linewidth=0.5)
+                
+                rsi_class = "positive" if current_rsi < 30 else "negative" if current_rsi > 70 else ""
+                st.markdown(f"Current RSI: <span class='{rsi_class}'>{current_rsi:.1f}</span>", unsafe_allow_html=True)
+                if current_rsi > 70:
+                    st.warning("Overbought - Potential sell signal")
+                elif current_rsi < 30:
+                    st.success("Oversold - Potential buy signal")
+                else:
+                    st.info("Neutral RSI")
+
+            ax1.set_facecolor('#000000')
+            fig.patch.set_facecolor('#000000')
+            ax1.tick_params(colors='white')
+            ax1.spines['bottom'].set_color('white')
+            ax1.spines['left'].set_color('white')
+            ax1.xaxis.label.set_color('white')
+            ax1.set_xlabel('Date')
+            st.pyplot(fig)
+        else:
+            st.info("No historical data yet. Refresh to populate.")
 
 if __name__ == "__main__":
     main_ui()
