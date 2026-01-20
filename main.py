@@ -12,8 +12,8 @@ def main():
     Database.init_db()
     api = BlizzardAPI(client_id, client_secret)
 
-    # Example realms (popular US Retail)
-    realm_names = ["illidan", "sargeras", "stormrage"]
+    # Popular US Classic Era realms (PvP/PvE mix)
+    realm_names = ["whitemane", "mankrik", "atiesh"]
     realm_ids = {}
     for name in realm_names:
         rid = api.get_connected_realm_id(name)
@@ -21,21 +21,19 @@ def main():
             realm_ids[name] = rid
 
     if not realm_ids:
-        print("No realms found. Run realm fetch manually.")
+        print("No realms found. Check API or realm names.")
         return
 
-    # Current TWW herbs/ore examples (add more!)
+    # Classic high-value items (e.g., ores/herbs for crafting/transmutes)
     items = {
-        210798: "Mycobloom",  # Herb
-        210808: "Arathor's Spear",  # Herb
-        # Add ores: e.g., 211435 Bismuth, 211453 Aqirite
+        10620: "Thorium Ore",  # Key for bars, engineering
+        13463: "Dreamfoil",    # For high-end pots/elixirs
     }
 
     timestamp = int(datetime.now().timestamp())
 
     results = []
-    auctions_data = None  # Will fetch per realm, but for calc use one
-    commodities = api.get_commodities()  # Region-wide
+    auctions_data = None  # Use last fetched for calc
 
     for realm_name, realm_id in realm_ids.items():
         print(f"\nFetching auctions for {realm_name} (ID: {realm_id})...")
@@ -71,18 +69,9 @@ def main():
         print("\n=== CURRENT MARKET SUMMARY ===")
         print(df.to_string(index=False))
 
-    print("\n=== TOP COMMODITIES (US Region) ===")
-    top_comms = commodities.get("auctions", [])[:20]
-    comm_df = pd.DataFrame([{
-        'Item ID': a['item']['id'],
-        'Avg Gold': format_gold((a.get('buyout') or a.get('unit_price', 0)) / 10000),
-        'Quantity': a['quantity']
-    } for a in top_comms])
-    print(comm_df.to_string(index=False))
-
     # Example history for first item/realm
     if realm_ids:
-        sample_item = 210798
+        sample_item = 10620
         sample_realm = list(realm_ids.values())[0]
         hist = Database.get_price_history(sample_item, sample_realm)
         if not hist.empty:
@@ -90,13 +79,13 @@ def main():
             hist['avg_gold'] = hist['avg_price'] / 10000
             print(hist[['datetime', 'avg_gold']].to_string(index=False))
 
-    # Crafting Example (using last auctions_data)
+    # Crafting Example: Transmute Arcanite (x5, as cooldown allows batches over time)
     if auctions_data:
-        example_recipe_id = 430599  # Tempered Potion or similar - replace as needed
+        example_recipe_id = 17187  # Transmute: Arcanite
         recipe = Recipe(example_recipe_id, api)
         if recipe.data:
-            calc = CraftingCalculator(api, auctions_data, commodities)
-            profit = calc.calculate_profit(recipe, quantity=10)
+            calc = CraftingCalculator(api, auctions_data)
+            profit = calc.calculate_profit(recipe, quantity=5)
             print_crafting_flow(profit)
 
 if __name__ == "__main__":
