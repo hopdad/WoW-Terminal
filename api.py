@@ -25,7 +25,7 @@ class BlizzardAPI:
         self.token_expiry = datetime.now() + timedelta(seconds=token_data.get("expires_in", 3600) - 60)
         return self.token
 
-    def fetch(self, endpoint: str, namespace: str = "dynamic-us", locale: str = "en_US") -> dict:
+    def fetch(self, endpoint: str, namespace: str = "dynamic-classic-us", locale: str = "en_US") -> dict:
         token = self._get_token()
         url = f"https://{self.region}.api.blizzard.com{endpoint}?namespace={namespace}&locale={locale}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -38,10 +38,12 @@ class BlizzardAPI:
         index_data = self.fetch("/data/wow/connected-realm/index")
         for cr in index_data.get("connected_realms", []):
             try:
-                details = self.fetch(f"/data/wow/connected-realm/{cr['href'].split('/')[-1]}")
+                href = cr["href"]
+                cr_id = href.split("/")[-1]
+                details = self.fetch(f"/data/wow/connected-realm/{cr_id}")
                 for realm in details.get("realms", []):
                     if realm_name.lower() in realm["name"].lower():
-                        print(f"Found {realm['name']} in connected_realm {cr['id']}")
+                        print(f"Found {realm['name']} in connected_realm {details['id']}")
                         return details["id"]
             except:
                 continue
@@ -49,7 +51,7 @@ class BlizzardAPI:
 
     def get_item_details(self, item_id: int) -> Dict:
         """Get item name and media."""
-        data = self.fetch(f"/data/wow/item/{item_id}", namespace="static-us")
+        data = self.fetch(f"/data/wow/item/{item_id}", namespace="static-classic-us")
         return {
             "name": data["name"],
             "icon": data["media"]["key"]["href"] if "media" in data else None
@@ -57,6 +59,3 @@ class BlizzardAPI:
 
     def get_auctions(self, connected_realm_id: int) -> dict:
         return self.fetch(f"/data/wow/connected-realm/{connected_realm_id}/auctions")
-
-    def get_commodities(self) -> dict:
-        return self.fetch("/data/wow/auctions/commodities")
