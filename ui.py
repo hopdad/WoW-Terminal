@@ -1,4 +1,3 @@
-# wow_terminal/ui.py (updated)
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,198 +6,151 @@ from .api import BlizzardAPI
 from .database import Database
 from .analyzer import AuctionAnalyzer
 from .calculator import Recipe, CraftingCalculator, format_gold
-from .quant import rsi  # New import
+from .quant import *
 
-# Bloomberg-like theme: Dark background, green/red accents
 st.markdown("""
-    <style>
-        .reportview-container {
-            background: #000000;
-            color: #FFFFFF;
-        }
-        .sidebar .sidebar-content {
-            background: #111111;
-        }
-        table {
-            background: #000000;
-            color: #FFFFFF;
-            border: 1px solid #333333;
-        }
-        th {
-            background: #222222;
-            color: #FFFFFF;
-        }
-        td {
-            border: 1px solid #333333;
-        }
-        .positive { color: #00FF00; }  /* Green up */
-        .negative { color: #FF0000; }  /* Red down */
-        .stButton>button {
-            background: #004400;
-            color: #FFFFFF;
-        }
-    </style>
+<style>
+    .stApp { background-color: #000; color: #fff; }
+    [data-testid="stSidebar"] { background-color: #111; }
+    .stTabs button { color: #fff; }
+    .positive { color: lime; } .negative { color: red; }
+</style>
 """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600)
+def fetch_multi_auctions(api, realms):
+    data = {}
+    for r in realms:
+        rid = api.get_connected_realm_id(r)
+        if rid: data[r] = api.get_auctions(rid)
+    return data
 
 def main_ui():
     st.title("WoW Classic Economy Terminal")
-    st.markdown("---")  # Bloomberg-like section dividers
-
-    # Sidebar for config (like Bloomberg's command line)
-    st.sidebar.header("Controls")
-    client_id = st.sidebar.text_input("Client ID", value="YOUR_CLIENT_ID")
-    client_secret = st.sidebar.text_input("Client Secret", value="YOUR_CLIENT_SECRET", type="password")
-    selected_realm = st.sidebar.selectbox("Realm", ["whitemane", "mankrik", "atiesh"])
-    selected_item_id = st.sidebar.selectbox("Item", {10620: "Thorium Ore", 13463: "Dreamfoil"})
-    recipe_id = st.sidebar.number_input("Recipe ID", value=17187)  # Transmute Arcanite
-    craft_qty = st.sidebar.number_input("Craft Quantity", value=5, min_value=1)
-    refresh_button = st.sidebar.button("Refresh Data")
-
-    if client_id == "YOUR_CLIENT_ID" or client_secret == "YOUR_CLIENT_SECRET":
-        st.warning("Enter your Blizzard API credentials in the sidebar.")
-        return
+    # Sidebar (old + new options)
+    st.sidebar.header("Settings")
+    client_id = st.sidebar.text_input("Client ID", "YOUR_CLIENT_ID")
+    client_secret = st.sidebar.text_input("Client Secret", type="password")
+    realm = st.sidebar.selectbox("Realm", ["whitemane", "mankrik", "atiesh"])
+    item_id = st.sidebar.selectbox("Item ID", [10620, 13463, 12360])
+    recipe_id = st.sidebar.number_input("Recipe ID", 17187)
+    craft_qty = st.sidebar.number_input("Craft Qty", 5)
+    if st.sidebar.button("Refresh"):
+        st.session_state.auctions = api.get_auctions(api.get_connected_realm_id(realm))
+        st.session_state.multi_auctions = fetch_multi_auctions(api, ["whitemane", "mankrik", "atiesh"])
+        st.rerun()
 
     api = BlizzardAPI(client_id, client_secret)
     Database.init_db()
+    auctions = st.session_state.get('auctions')
+    multi_auctions = st.session_state.get('multi_auctions', {})
 
-    # Fetch realm ID
-    realm_id = api.get_connected_realm_id(selected_realm)
-    if not realm_id:
-        st.error(f"Realm {selected_realm} not found.")
-        return
+    if not auctions: return
 
-    # Multi-panel layout like Bloomberg (columns)
-    col1, col2 = st.columns(2)
+    # Tabs (old market/chart in first, new in others)
+    tabs = st.tabs(["Market & Chart", "Sniping", "Vendor Flips", "Farms", "Arb", "Posting", "Demand", "Health", "News", "Backtest", "Portfolio"])
 
-    with col1:
-        st.subheader("Market Summary")
-        try:
-            auctions_data = api.get_auctions(realm_id)
-            last_mod = datetime.fromtimestamp(auctions_data['lastModified']/1000)
-            st.markdown(f"Last Updated: {last_mod}")
+    with tabs[0]:
+        # Old Market Summary
+        results = []
+        for iid in [10620, 13463, 12360]:
+            stats = AuctionAnalyzer.analyze_item(auctions, iid)
+            if stats:
+                old_p = Database.get_recent_price(iid, api.get_connected_realm_id(realm))
+                change = ((stats['avg'] - old_p) / old_p * 100) if old_p else 0
+                change_class = "positive" if change > 0 else "negative"
+                results.append({
+                    'Item': api.get_item_details(iid)['name'],
+                    'Min': format_gold(stats['min']),
+                    'Avg': format_gold(stats['avg']),
+                    'Max': format_gold(stats['max']),
+                    'Volume': stats['volume'],
+                    '% Change': f"<span class='{change_class}'>{change:+.1f}%</span>"
+                })
+        if results: st.markdown(pd.DataFrame(results).to_html(escape=False), unsafe_allow_html=True)
 
-            results = []
-            for item_id, item_name in {10620: "Thorium Ore", 13463: "Dreamfoil"}.items():  # All items
-                stats = AuctionAnalyzer.analyze_item(auctions_data, item_id)
-                if stats:
-                    old_price = Database.get_recent_price(item_id, realm_id)
-                    change = ((stats['avg'] - old_price) / old_price * 100) if old_price else 0
-                    # Store if refresh
-                    if refresh_button:
-                        Database.store_price(realm_id, item_id, stats, int(datetime.now().timestamp()))
-
-                    change_class = "positive" if change > 0 else "negative"
-                    results.append({
-                        'Item': item_name,
-                        'Min': format_gold(stats['min']),
-                        'Avg': format_gold(stats['avg']),
-                        'Max': format_gold(stats['max']),
-                        'Volume': stats['volume'],
-                        'Listings': stats['listings'],
-                        '% Change': f"<span class='{change_class}'>{change:+.1f}%</span>"
-                    })
-
-            if results:
-                df = pd.DataFrame(results)
-                st.markdown(df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            else:
-                st.info("No auction data available.")
-        except Exception as e:
-            st.error(f"Error fetching auctions: {e}")
-
-    with col2:
-        st.subheader("Price History Chart")
-        hist = Database.get_price_history(selected_item_id, realm_id)
+        # Old Chart with RSI
+        hist = get_item_history(item_id, api.get_connected_realm_id(realm))
         if not hist.empty:
-            hist['avg_gold'] = hist['avg_price'] / 10000
-            fig, ax = plt.subplots()
-            ax.plot(hist['datetime'], hist['avg_gold'], color='lime', label='Avg Price')
-            ax.set_facecolor('#000000')
-            fig.patch.set_facecolor('#000000')
-            ax.tick_params(colors='white')
-            ax.spines['bottom'].set_color('white')
-            ax.spines['left'].set_color('white')
-            ax.yaxis.label.set_color('white')
-            ax.xaxis.label.set_color('white')
-            ax.set_ylabel('Gold')
-            ax.set_xlabel('Date')
-            st.pyplot(fig)
-        else:
-            st.info("No historical data yet. Refresh to populate.")
-
-    st.markdown("---")
-
-    st.subheader("Crafting Profit Calculator")
-    if auctions_data:
-        recipe = Recipe(recipe_id, api)
-        if recipe.data:
-            calc = CraftingCalculator(api, auctions_data)
-            profit = calc.calculate_profit(recipe, quantity=craft_qty)
-            
-            # Adapt print_crafting_flow to Streamlit
-            st.markdown(f"### {profit['crafted_name']} (x{profit['quantity_crafted']})")
-            inputs_df = pd.DataFrame(profit['inputs'])
-            inputs_df['unit_price_gold'] = inputs_df['unit_price_gold'].apply(format_gold)
-            inputs_df['total_cost_gold'] = inputs_df['total_cost_gold'].apply(format_gold)
-            st.table(inputs_df[['name', 'qty', 'unit_price_gold', 'total_cost_gold']])
-
-            profit_class = "positive" if profit['profit_gold'] > 0 else "negative"
-            st.markdown(f"""
-                Total Cost: {format_gold(profit['total_cost_gold'])}  
-                Revenue: {format_gold(profit['revenue_gold'])}  
-                Profit: <span class='{profit_class}'>{format_gold(profit['profit_gold'])} ({profit['margin_pct']:+.1f}%)</span>
-            """, unsafe_allow_html=True)
-            
-            if profit['margin_pct'] > 10:
-                st.success("Strong opportunity!")
-            elif profit['margin_pct'] > 0:
-                st.info("Positive margin.")
-            else:
-                st.warning("Loss or break-even.")
-        else:
-            st.error("Recipe not found.")
-    else:
-        st.info("Fetch auctions first.")
-
-with col2:
-        st.subheader("Price History Chart")
-        hist = Database.get_price_history(selected_item_id, realm_id)
-        if not hist.empty:
-            hist['avg_gold'] = hist['avg_price'] / 10000
             fig, ax1 = plt.subplots()
-            ax1.plot(hist['datetime'], hist['avg_gold'], color='lime', label='Avg Price')
+            ax1.plot(hist['datetime'], hist['price'], 'lime')
             ax1.set_ylabel('Gold', color='lime')
-            ax1.tick_params(axis='y', labelcolor='lime')
-
-            # Add RSI subplot
-            current_rsi, rsi_df = rsi(selected_item_id, realm_id)
-            if rsi_df is not None:
+            _, rsi_df = rsi(item_id, api.get_connected_realm_id(realm))
+            if not rsi_df.empty:
                 ax2 = ax1.twinx()
-                ax2.plot(rsi_df['datetime'], rsi_df['rsi'], color='cyan', label='RSI (14)')
+                ax2.plot(rsi_df['datetime'], rsi_df['rsi'], 'cyan')
                 ax2.set_ylabel('RSI', color='cyan')
-                ax2.tick_params(axis='y', labelcolor='cyan')
-                ax2.axhline(70, color='red', linestyle='--', linewidth=0.5)
-                ax2.axhline(30, color='green', linestyle='--', linewidth=0.5)
-                
-                rsi_class = "positive" if current_rsi < 30 else "negative" if current_rsi > 70 else ""
-                st.markdown(f"Current RSI: <span class='{rsi_class}'>{current_rsi:.1f}</span>", unsafe_allow_html=True)
-                if current_rsi > 70:
-                    st.warning("Overbought - Potential sell signal")
-                elif current_rsi < 30:
-                    st.success("Oversold - Potential buy signal")
-                else:
-                    st.info("Neutral RSI")
-
-            ax1.set_facecolor('#000000')
-            fig.patch.set_facecolor('#000000')
+                ax2.axhline(70, color='red', ls='--')
+                ax2.axhline(30, color='green', ls='--')
+            fig.patch.set_facecolor('#000')
+            ax1.set_facecolor('#000')
             ax1.tick_params(colors='white')
-            ax1.spines['bottom'].set_color('white')
-            ax1.spines['left'].set_color('white')
-            ax1.xaxis.label.set_color('white')
-            ax1.set_xlabel('Date')
+            ax2.tick_params(colors='white')
             st.pyplot(fig)
-        else:
-            st.info("No historical data yet. Refresh to populate.")
+
+    with tabs[1]:  # Sniping
+        opps = sniping_opps(auctions, item_id, api.get_connected_realm_id(realm))
+        if opps: st.table(opps)
+        else: st.info("No snipes found.")
+
+    with tabs[2]:  # Flips
+        flips = vendor_flips(auctions, api)
+        if flips: st.table(flips)
+        else: st.info("No flips.")
+
+    with tabs[3]:  # Farms
+        gphs = {k: farm_gph(k, lambda iid: get_unit_price(auctions, iid)) for k in FARMS}
+        st.table(pd.DataFrame.from_dict(gphs, orient='index', columns=['GPH']).sort_values('GPH', ascending=False))
+
+    with tabs[4]:  # Arb
+        if multi_auctions: st.table(realm_arb(item_id, multi_auctions))
+        else: st.info("Refresh for multi-realm.")
+
+    with tabs[5]:  # Posting
+        stats = AuctionAnalyzer.analyze_item(auctions, item_id)
+        if stats:
+            vol = volatility(item_id, api.get_connected_realm_id(realm))
+            sugg = post_price(stats, vol)
+            st.metric("Suggested Price", format_gold(sugg))
+
+    with tabs[6]:  # Demand
+        demand = mat_demand(item_id, auctions, api)
+        st.metric("Demand Volume", demand)
+
+    with tabs[7]:  # Health
+        health = economy_health(auctions)
+        st.json(health)
+
+    with tabs[8]:  # News
+        st.table(RECENT_NEWS)
+
+    with tabs[9]:  # Backtest
+        bt = backtest_strategy(item_id, api.get_connected_realm_id(realm))
+        if not bt.empty: st.line_chart(bt.set_index('datetime'))
+
+    with tabs[10]:  # Portfolio
+        pos_json = st.text_area("Positions e.g. [{'item_id':10620, 'qty':100, 'buy_price':8.5}]")
+        if pos_json:
+            try:
+                positions = json.loads(pos_json)
+                val = portfolio_value(positions, lambda iid: get_unit_price(auctions, iid))
+                st.json(val)
+            except: st.error("Invalid JSON.")
+
+    # Old Crafting (always visible)
+    st.markdown("---")
+    st.subheader("Crafting Calculator")
+    recipe = Recipe(recipe_id, api)
+    if recipe.data:
+        calc = CraftingCalculator(api, auctions)
+        profit = calc.calculate_profit(recipe, craft_qty)
+        inputs_df = pd.DataFrame(profit['inputs'])
+        inputs_df['unit_price_gold'] = inputs_df['unit_price_gold'].apply(format_gold)
+        inputs_df['total_cost_gold'] = inputs_df['total_cost_gold'].apply(format_gold)
+        st.table(inputs_df[['name', 'qty', 'unit_price_gold', 'total_cost_gold']])
+        profit_class = "positive" if profit['profit_gold'] > 0 else "negative"
+        st.markdown(f"Total Cost: {format_gold(profit['total_cost_gold'])} | Revenue: {format_gold(profit['revenue_gold'])} | Profit: <span class='{profit_class}'>{format_gold(profit['profit_gold'])} ({profit['margin_pct']:+.1f}%)</span>", unsafe_allow_html=True)
+    else: st.info("Invalid recipe.")
 
 if __name__ == "__main__":
     main_ui()
