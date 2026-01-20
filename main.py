@@ -69,6 +69,14 @@ def main():
         print("\n=== CURRENT MARKET SUMMARY ===")
         print(df.to_string(index=False))
 
+    from .quant import volatility, moving_averages, correlation
+
+# Example
+thorium_id = 10620
+print(f"Thorium Ore Volatility (annualized): {volatility(thorium_id, sample_realm):.2f}")
+ma_df = moving_averages(thorium_id, sample_realm)
+print(ma_df.tail())
+
     # Example history for first item/realm
     if realm_ids:
         sample_item = 10620
