@@ -1,5 +1,5 @@
 from typing import Dict, Optional, List
-from .api import BlizzardAPI  # Import from package
+from .api import BlizzardAPI
 
 class Recipe:
     def __init__(self, recipe_id: int, api: BlizzardAPI):
@@ -9,7 +9,7 @@ class Recipe:
 
     def _fetch_recipe(self) -> Dict:
         try:
-            data = self.api.fetch(f"/data/wow/recipe/{self.recipe_id}", namespace="static-us")
+            data = self.api.fetch(f"/data/wow/recipe/{self.recipe_id}", namespace="static-classic-us")
             return data
         except Exception as e:
             print(f"Error fetching recipe {self.recipe_id}: {e}")
@@ -33,28 +33,27 @@ class Recipe:
 
     def get_item_name(self, item_id: int) -> str:
         try:
-            item_data = self.api.fetch(f"/data/wow/item/{item_id}", namespace="static-us")
+            item_data = self.api.fetch(f"/data/wow/item/{item_id}", namespace="static-classic-us")
             return item_data.get("name", f"Item {item_id}")
         except:
             return f"Item {item_id}"
 
 class CraftingCalculator:
-    def __init__(self, api: BlizzardAPI, auctions_data: dict, commodities_data: dict = None):
+    def __init__(self, api: BlizzardAPI, auctions_data: dict):
         self.api = api
         self.auctions = auctions_data
-        self.commodities = commodities_data
 
     def get_unit_price(self, item_id: int) -> float:
+        """Get min unit_price in copper from auctions (Classic style: use lowest for cost calcs)."""
+        min_price = float('inf')
         for auc in self.auctions.get("auctions", []):
             if auc["item"]["id"] == item_id:
                 price = auc.get("buyout") or auc.get("unit_price")
                 if price:
-                    return price / auc["quantity"]
-        if self.commodities:
-            for auc in self.commodities.get("auctions", []):
-                if auc["item"]["id"] == item_id:
-                    return auc.get("unit_price", 0) / auc["quantity"]
-        return 0.0
+                    unit = price / auc["quantity"]
+                    if unit < min_price:
+                        min_price = unit
+        return min_price if min_price != float('inf') else 0.0
 
     def calculate_profit(self, recipe: Recipe, quantity: int = 1) -> Dict:
         if not recipe.data:
@@ -92,7 +91,7 @@ class CraftingCalculator:
         }
 
 def format_gold(amount: float) -> str:
-    g = int(amount * 10000)  # To copper for precision
+    g = int(amount * 10000)  # To copper
     return f"{g//10000:,}g {(g%10000)//100:02d}s {g%100:02d}c"
 
 def print_crafting_flow(calculation: Dict):
